@@ -1,0 +1,85 @@
+# Claim within 15 days of policy expiry (date of loss -insurance_policy.expiry)
+raw_df["EXPIRY_DATE"] = pd.to_datetime(raw_df["EXPIRY_DATE"])
+raw_df["LOSS_EVENT_TIME"] = pd.to_datetime(raw_df["LOSS_EVENT_TIME"])
+
+raw_df["DAYS_FROM_LOSS"] = raw_df["LOSS_EVENT_TIME"] -raw_df["EXPIRY_DATE"]
+raw_df["DAYS_FROM_LOSS"] = abs(raw_df.DAYS_FROM_LOSS.dt.days)
+
+raw_df.loc[raw_df['DAYS_FROM_LOSS'] >= 15, ['SUSPICIOUS_CLAIM_TIME'] = 1
+raw_df.loc[raw_df['DAYS_FROM_LOSS'] < 15, 'SUSPICIOUS_CLAIM_TIME'] = 0
+
+raw_df["SUSPICIOUS_CLAIM_TIME"].value_counts()
+
+# Expired drivers license (if date of loss > insurance_driver.drivers_license_expiry)
+raw_df["DRIVERS_LICENSE_EXPIRY"] = pd.to_datetime(raw_df["DRIVERS_LICENSE_EXPIRY"])
+raw_df["DAYS_FROM_L_EXPIRY"] = raw_df["DRIVERS_LICENSE_EXPIRY"] -raw_df["LOSS_EVENT_TIME"]
+raw_df["DAYS_FROM_L_EXPIRY"] = raw_df.DAYS_FROM_L_EXPIRY.dt.days
+
+raw_df.loc[raw_df['DAYS_FROM_L_EXPIRY'] >= 0, 'EXPIRED_LICENSE'] = 0
+raw_df.loc[raw_df['DAYS_FROM_L_EXPIRY'] < 0, 'EXPIRED_LICENSE'] = 1
+
+# Days living at current address (date of loss -insurance_driver.date_at_current_address)
+raw_df["DATE_AT_CURRENT_ADDRESS"] = pd.to_datetime(raw_df["DATE_AT_CURRENT_ADDRESS"])
+raw_df["DAYS_AT_ADDRESS"] = raw_df["LOSS_EVENT_TIME"] -raw_df["DATE_AT_CURRENT_ADDRESS"]
+raw_df["DAYS_AT_ADDRESS"] = abs(raw_df.DAYS_AT_ADDRESS.dt.days)
+
+raw_df.loc[raw_df['DAYS_AT_ADDRESS'] >= 15, 'SUSPICIOUS_LIVING'] = 1
+raw_df.loc[raw_df['DAYS_AT_ADDRESS'] < 15, 'SUSPICIOUS_LIVING'] = 0
+
+raw_df["SUSPICIOUS_LIVING"].value_counts()
+
+#7500/year
+raw_df["START_DATE"] = pd.to_datetime(raw_df["START_DATE"])
+
+#find number of days between policy creation and accident
+raw_df["LENGTH_OF_POLICY"]=(raw_df["LOSS_EVENT_TIME"] -raw_df["START_DATE"]).dt.days
+
+#convert to years
+raw_df["LENGTH_OF_POLICY"]=raw_df["LENGTH_OF_POLICY"]/365
+
+#divide Odometer at loss by years
+raw_df["MILES/YEAR"] = raw_df["ODOMETER_AT_LOSS"]/raw_df["LENGTH_OF_POLICY"]
+raw_df["MILES/YEAR"].value_counts()
+
+# Conflict on whether a policyholder with a low mileage discount experienced a loss with high mileage at the point of loss
+raw_df.loc[raw_df["MILES/YEAR"] <7500, 'LOW_MILEAGE_AT_LOSS'] = 1
+raw_df.loc[raw_df["MILES/YEAR"] >=7500, 'LOW_MILEAGE_AT_LOSS'] = 0
+
+raw_df.loc[raw_df["LOW_MILEAGE_USE"]==raw_df["LOW_MILEAGE_AT_LOSS"], 'SUSPICIOUS_MILEAGE'] = 0
+raw_df.loc[raw_df["LOW_MILEAGE_USE"]!=raw_df["LOW_MILEAGE_AT_LOSS"], 'SUSPICIOUS_MILEAGE'] = 1
+
+raw_df.loc[raw_df["CLAIM_AMOUNT"] <3000, 'EXCESSIVE_CLAIM_AMOUNT'] = 0
+raw_df.loc[raw_df["CLAIM_AMOUNT"] >=3000, 'EXCESSIVE_CLAIM_AMOUNT'] = 1
+
+# dataframes for certain features
+features = ['FLAG_FOR_FRAUD_INV', 'SUSPICIOUS_MILEAGE','EXPIRED_LICENSE','SUSPICIOUS_CLAIM_TIME','SUSPICIOUS_LIVING','EXCESSIVE_CLAIM_AMOUNT']
+
+df_model = raw_df[features]
+
+#ensure all relevant features are integers
+df_model["SUSPICIOUS_LIVING"] = df_model["SUSPICIOUS_LIVING"].astype(int)
+df_model["EXPIRED_LICENSE"] = df_model["EXPIRED_LICENSE"].astype(int)
+df_model["SUSPICIOUS_CLAIM_TIME"] = df_model["SUSPICIOUS_CLAIM_TIME"].astype(int)
+df_model["SUSPICIOUS_MILEAGE"] = df_model["SUSPICIOUS_MILEAGE"].astype(int)
+df_model["EXCESSIVE_CLAIM_AMOUNT"] = df_model["EXCESSIVE_CLAIM_AMOUNT"].astype(int)
+
+raw_df.groupby("FLAG_FOR_FRAUD_INV", as_index=False).mean()
+
+#split data into x and y variables
+xVar= df_model[["EXPIRED_LICENSE","SUSPICIOUS_CLAIM_TIME","SUSPICIOUS_LIVING","SUSPICIOUS_MILEAGE","EXCESSIVE_CLAIM_AMOUNT"]]
+yVar = df_model["FLAG_FOR_FRAUD_INV"]
+
+xVar.head()
+
+#split into a test/train set
+X_train, X_test, y_train, y_test = train_test_split(xVar, yVar, test_size=0.2)
+print (X_train.shape, y_train.shape)
+print (X_test.shape, y_test.shape)
+
+#train model
+clf =RandomForestClassifier(n_jobs=2, random_state=0)
+clf.fit(X_train, y_train)
+
+#create confusion matrix to gut check model
+preds = clf.predict(X_test)
+pd.crosstab(y_test, preds, rownames=['Actual Result'], colnames=['Predicted Result'])
